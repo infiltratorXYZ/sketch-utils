@@ -1,2 +1,2 @@
 # sketch-utils
-Simple utilities for managing and parsing sketch files (custom work - probablu not reusable)
+Simple utilities for managing and parsing sketch files (custom work - probably not reusable)
