@@ -9,14 +9,43 @@ import json
 import pyjq
 import csv
 
+from collections.abc import Mapping, Set, Sequence
 # TODO: DE-DUMPING
 
-helper = """
+helper = """========== HELP ==========
+
+Summary:
 sketchparse - simple sketch file parser.
-It gets sketch file and produces output with all strings whose name begins with the prefix \"%%\".
+
+It gets sketch file and produces output with all strings whose name begins with
+the prefix \"%%\".
 
 Usage:
-sketchparse [-h|--help|help] input_file_name.sketch [-o output_file_name]
+sketchparse [-h|--help|help] [-i|--invert] input_file_name [-o output_file_name]
+
+Options:
+    -h
+    --help
+    help
+        Produces this message.
+
+    -i
+    --invert
+        It reverses the behavior of the program. This means that at the moment
+        the input file should be a CSV file and the all strings in SKETCH file
+        (output) will be replaced with values from input file.
+
+        Warning!
+        Must be passed before input_file_name.
+
+    -o
+        There is an optional value. If no output file is selected, the program
+        will use the same name as the input file and just change the output
+        file format.
+
+Disclaimer:
+It is assumed that the first row of the CSV file will always contain column
+names.
 """
 
 
@@ -24,14 +53,22 @@ class ParseSketch:
     inputFile = None
     outputFile = None
     tempdir = None
-    unpacked = False
 
-    def __init__(self, args):
-        if not self.parseArgs(args):
-            self.terminate()
-        if not self.inputFile or not self.outputFile:
-            print('Please specify input/output files properly.')
-            self.terminate()
+    def __init__(self, args, invert=False, helper=''):
+        self.helper=helper
+        if not invert:
+            if not self.parseArgs(args):
+                self.terminate()
+            if not self.inputFile or not self.outputFile:
+                print('Please specify input/output files properly.')
+                self.terminate()
+        else:
+            if not self.parseArgsForConverter(args):
+                self.terminate()
+            if not self.inputFile or not self.outputFile:
+                print('Please specify input/output files properly.')
+                self.terminate()
+
 
     def parseArgs(self, args):
         def rreplace(s, old, new, occurrence=0):
@@ -66,6 +103,37 @@ class ParseSketch:
 
         return True
 
+    def parseArgsForConverter(self, args):
+        def rreplace(s, old, new, occurrence=0):
+            li = s.rsplit(old, occurrence)
+            return new.join(li)
+
+        if len(args) > 2:
+            self.inputFile = args[2]
+            if not self.inputFile.endswith('.csv'):
+                print("Error: This is not a CSV file. Please enter a name for the input file with '.csv' format.")
+                return False
+            isOutput = False
+            for arg in args:
+                if arg == '-o':
+                    isOutput = True
+                    if arg == args[-1]:
+                        print('Error: Please specify the output file.')
+                        return False
+
+                    continue
+                elif isOutput:
+                    self.outputFile = arg
+                    break
+            if not isOutput:
+                self.outputFile = rreplace(args[2], '.csv', '.sketch', 1)
+
+        else:
+            print("Error: Please specify the input file."),
+            return False
+
+        return True
+
     def checkIfExsist(self, iFile=None):
         if not iFile:
             iFile = self.inputFile
@@ -74,14 +142,19 @@ class ParseSketch:
         print("Error: File '"+iFile+"' doesn't exist.")
         return False
 
-    def unpackFile(self):
-        if not self.checkIfExsist():
+    def unpackFile(self, invert=False):
+        if not invert:
+            sketchFile = self.inputFile
+        else:
+            sketchFile = self.outputFile
+
+        if not self.checkIfExsist(sketchFile):
             self.terminate(1)
         try:
             with tempfile.TemporaryDirectory() as tmpdir:
                 self.tempdir = tmpdir
 
-            with zipfile.ZipFile(self.inputFile, 'r') as zip_ref:
+            with zipfile.ZipFile(sketchFile, 'r') as zip_ref:
                 zip_ref.extractall(self.tempdir)
         except Exception as err:
             msg = 'Error: There is a problem with unpacking sketch file.'
@@ -99,6 +172,17 @@ class ParseSketch:
                 writer.writerow(entry)
 
         print("Done.")
+
+    def parseCSVFile(self, data):
+        if not self.checkIfExsist(data):
+            self.terminate(1)
+        try:
+            with open(data) as csv_file:
+                reader = csv.reader(csv_file, delimiter=',')
+                return list(reader)[1:]
+        except Exception as err:
+            msg = 'Error: There is a problem with parsing CSV file.'
+            raise Exception(msg).with_traceback(err.__traceback__)
 
     def getListOfPages(self):
         print("Pages loading...")
@@ -118,7 +202,48 @@ class ParseSketch:
 
         return parsedData
 
+    def recursivelyWalkPageObjects(self, page):
+        string_types = (bytes, str) if str is bytes else (str, bytes)
+        iteritems = lambda mapping: getattr(mapping, 'iteritems', mapping.items)()
+        def objwalk(obj, path=(), memo=None):
+            if memo is None:
+                memo = set()
+            iterator = None
+            if isinstance(obj, Mapping):
+                iterator = iteritems
+            elif isinstance(obj, (Sequence, Set)) and not isinstance(obj, string_types):
+                iterator = enumerate
+            if iterator:
+                if id(obj) not in memo:
+                    memo.add(id(obj))
+                    for path_component, value in iterator(obj):
+                        for result in objwalk(value, path + (path_component,), memo):
+                            yield result
+                    memo.remove(id(obj))
+            else:
+                yield path, obj
+
+        print("Parsing...")
+        return objwalk(page)
+
+    def updatePage(self, page):
+        print("Page opening...")
+        page = 'test_output.json'
+        with open(page) as json_file:
+            content = json.load(json_file)
+
+        for path, value in self.recursivelyWalkPageObjects(content):
+            if path[-1] == "name" and value.startswith("%%"):
+                print(path, value)
+                parent = content
+                for step in path[:-1]:
+                    parent = parent[step]
+                # parent["attributedString"]["string"] = "DUPA"
+
+
     def terminate(self, exitcode=2):
+        print('\n')
+        print(self.helper)
         sys.exit(exitcode)
 
     def runExtractor(self):
@@ -130,12 +255,30 @@ class ParseSketch:
 
         self.saveCSVOutput(data)
 
+    def runConverter(self):
+        inputFile = self.inputFile
+        processingData = self.parseCSVFile(inputFile)
+        self.unpackFile(True)
+        pages = self.getListOfPages()
+        page = pages[0]
+        self.updatePage(page)
+
 
 if __name__ == '__main__':
-
+    helper_info = "For help please run:\nsketchparse --help"
     args = sys.argv
     if '-h' in args or '--help' in args or 'help' in args:
         print(helper)
         sys.exit(0)
-    parser = ParseSketch(args)
-    parser.runExExtractor()
+    elif '-i' in args or '--invert' in args:
+        if args[1] == '-i' or args[1] == '--invert':
+            converter = ParseSketch(args, invert=True, helper=helper_info)
+            converter.runConverter()
+        else:
+            print("Error: -i or --invert flag passed in wrong place.")
+            print("Must be passed before input_file_name.\n")
+            print(helper_info)
+            sys.exit(2)
+    else:
+        parser = ParseSketch(args, helper=helper_info)
+        parser.runExtractor()
