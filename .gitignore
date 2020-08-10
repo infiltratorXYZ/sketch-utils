@@ -1,3 +1,8 @@
+# Custom
+sample_file.csv
+test/
+test_output.json
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
