@@ -10,7 +10,6 @@ import pyjq
 import csv
 
 from collections.abc import Mapping, Set, Sequence
-# TODO: DE-DUMPING
 
 helper = """========== HELP ==========
 
@@ -147,6 +146,7 @@ class ParseSketch:
             sketchFile = self.inputFile
         else:
             sketchFile = self.outputFile
+        print("Unpacking "+sketchFile+" file...")
 
         if not self.checkIfExsist(sketchFile):
             self.terminate(1)
@@ -160,16 +160,44 @@ class ParseSketch:
             msg = 'Error: There is a problem with unpacking sketch file.'
             raise Exception(msg).with_traceback(err.__traceback__)
 
+        print("Done.\n")
+
+    def packFile(self):
+        def zipdir(path, ziph):
+            # ziph is zipfile handle
+            for root, dirs, files in os.walk(path):
+                for file in files:
+                    file_root = "/".join(root.split('/')[3:])
+                    ziph.write(os.path.join(root, file), os.path.join(file_root, file))
+
+
+        sketchFile = self.outputFile
+        print("\nUpdating " +sketchFile+" file...")
+
+        if not self.checkIfExsist(sketchFile):
+            self.terminate(1)
+        try:
+            with zipfile.ZipFile(sketchFile, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                zipdir(self.tempdir, zipf)
+        except Exception as err:
+            msg = 'Error: There is a problem with zipping sketch file.'
+            raise Exception(msg).with_traceback(err.__traceback__)
+        print("Done.")
+
+
     def saveCSVOutput(self, data):
         print("Saving output...")
+        deDumpingList = []
 
         with open(self.outputFile, "w") as output:
             writer = csv.writer(output, delimiter=',')
             writer.writerow(["label", "string"])
 
             for entry in data:
-                entry = [entry["label"], entry["string"]]
-                writer.writerow(entry)
+                if entry["label"] not in deDumpingList:
+                    deDumpingList.append(entry["label"])
+                    entry = [entry["label"], entry["string"]]
+                    writer.writerow(entry)
 
         print("Done.")
 
@@ -226,19 +254,24 @@ class ParseSketch:
         print("Parsing...")
         return objwalk(page)
 
-    def updatePage(self, page):
+    def updatePage(self, page, csvd):
+        #csvd is a list of strings to replace (provided by CSV input file)
         print("Page opening...")
-        page = 'test_output.json'
         with open(page) as json_file:
             content = json.load(json_file)
 
         for path, value in self.recursivelyWalkPageObjects(content):
             if path[-1] == "name" and value.startswith("%%"):
-                print(path, value)
                 parent = content
                 for step in path[:-1]:
                     parent = parent[step]
-                # parent["attributedString"]["string"] = "DUPA"
+
+                for csv_row in csvd:
+                    if value == csv_row[0]:
+                        parent["attributedString"]["string"] = csv_row[1]
+
+        with open(page, "w") as json_file:
+            json.dump(content, json_file)
 
 
     def terminate(self, exitcode=2):
@@ -260,8 +293,9 @@ class ParseSketch:
         processingData = self.parseCSVFile(inputFile)
         self.unpackFile(True)
         pages = self.getListOfPages()
-        page = pages[0]
-        self.updatePage(page)
+        for page in pages:
+            self.updatePage(page, processingData)
+        self.packFile()
 
 
 if __name__ == '__main__':
