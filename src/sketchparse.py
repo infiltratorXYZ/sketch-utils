@@ -167,7 +167,11 @@ class ParseSketch:
             # ziph is zipfile handle
             for root, dirs, files in os.walk(path):
                 for file in files:
-                    file_root = "/".join(root.split('/')[3:])
+                    if sys.platform.startswith('linux'):
+                        file_root = "/".join(root.split('/')[3:])
+                    elif sys.platform.startswith('darwin'):
+                        file_root = "/".join(root.split('/')[7:])
+
                     ziph.write(os.path.join(root, file), os.path.join(file_root, file))
 
 
