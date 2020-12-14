@@ -273,6 +273,9 @@ class ParseSketch:
                 for csv_row in csvd:
                     if value == csv_row[0]:
                         parent["attributedString"]["string"] = csv_row[1]
+                        atrib = parent["attributedString"]["attributes"][0]
+                        atrib["location"] = 0
+                        atrib["length"] = len(csv_row[1])
 
         with open(page, "w") as json_file:
             json.dump(content, json_file)
